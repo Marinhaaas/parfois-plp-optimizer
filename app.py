@@ -20,39 +20,35 @@ st.markdown("---")
 st.sidebar.header("Configurações de Entrada")
 ficheiro_carregado = st.sidebar.file_uploader("Carrega o ficheiro CSV do GA4", type=["csv"])
 
-def analisar_eficiencia_com_dados(df_bruto):
+def analisar_eficiencia_com_dados(linhas_brutas):
     """
-    Processa os dados de forma idêntica ao script original, 
-    mas adaptado para interagir diretamente com a interface web.
+    Processa as linhas de texto brutas do ficheiro, ignora metadados,
+    contorna a quebra do Grand Total e executa o motor matemático.
     """
-    # 1. Localizar dinamicamente a linha do cabeçalho real nos dados carregados
-    # Como o Streamlit nos dá os dados em memória, podemos fazer o reset do cabeçalho
-    df_bruto.columns = [str(col).strip() for col in df_bruto.columns]
-    
-    # Se o Pandas leu os metadados como colunas, precisamos de localizar a linha certa
-    linhas_a_pular = None
-    for idx, row in df_bruto.iterrows():
-        # Verificar se alguma célula contém a string chave do cabeçalho
-        if any('Item list position' in str(cell) for cell in row.values):
+    # 1. Localizar dinamicamente a linha do cabeçalho real
+    linhas_a_pular = 0
+    for idx, linha in enumerate(linhas_brutas):
+        if 'Item list position' in linha:
             linhas_a_pular = idx
             break
-            
-    if linhas_a_pular is not None:
-        # Reconfigurar as colunas com base na linha correta localizada
-        novas_colunas = [str(cell).strip() for cell in df_bruto.iloc[linhas_a_pular].values]
-        df_limpo = df_bruto.iloc[linhas_a_pular+1:].copy()
-        df_limpo.columns = novas_colunas
-    else:
-        df_limpo = df_bruto.copy()
+
+    # 2. Processar apenas as linhas de dados puras, ignorando o lixo estrutural e Grand Total
+    linhas_dados = []
+    for linha in linhas_brutas[linhas_a_pular+1:]:
+        partes = linha.strip().split(',')
+        if not partes or 'Grand total' in linha or partes[0] == '':
+            continue
+        linhas_dados.append(partes[:3])
+
+    # Criar o DataFrame de forma limpa com 3 colunas estritas
+    nomes_colunas = [col.strip() for col in linhas_brutas[linhas_a_pular].strip().split(',')]
+    df_limpo = pd.DataFrame(linhas_dados, columns=nomes_colunas)
 
     col_posicao = df_limpo.columns[0]
     col_views = df_limpo.columns[1]
     col_clicks = df_limpo.columns[2]
 
-    # 2. Conversão numérica e limpeza de dados estruturais e ruídos (Grand Total e Posição -1)
-    df_limpo = df_limpo.dropna(subset=[col_posicao]).copy()
-    df_limpo = df_limpo[~df_limpo.apply(lambda row: row.astype(str).str.contains('Grand total').any(), axis=1)]
-    
+    # 3. Conversão numérica e limpeza de ruído técnico (Posição -1)
     df_limpo[col_posicao] = pd.to_numeric(df_limpo[col_posicao], errors='coerce')
     df_limpo[col_views] = pd.to_numeric(df_limpo[col_views], errors='coerce')
     df_limpo[col_clicks] = pd.to_numeric(df_limpo[col_clicks], errors='coerce')
@@ -61,7 +57,7 @@ def analisar_eficiencia_com_dados(df_bruto):
     df_limpo = df_limpo[df_limpo[col_posicao] != -1]
     df_limpo = df_limpo.sort_values(by=col_posicao).reset_index(drop=True)
 
-    # 3. Cálculos de Percentagens Cumulativas
+    # 4. Cálculos de Percentagens Cumulativas
     total_views = df_limpo[col_views].sum()
     total_clicks = df_limpo[col_clicks].sum()
 
@@ -69,7 +65,7 @@ def analisar_eficiencia_com_dados(df_bruto):
     df_limpo['cum_clicks_pct'] = (df_limpo[col_clicks].cumsum() / total_clicks) * 100
     df_limpo['eficiencia_marginal'] = df_limpo['cum_clicks_pct'] - df_limpo['cum_views_pct']
 
-    # 4. Localização dos Marcos Críticos de Decisão
+    # 5. Localização dos Marcos Críticos de Decisão
     idx_max_eficiencia = df_limpo['eficiencia_marginal'].idxmax()
     ponto_otimo = df_limpo.loc[idx_max_eficiencia]
     posicao_corte = int(ponto_otimo[col_posicao])
@@ -86,17 +82,17 @@ def analisar_eficiencia_com_dados(df_bruto):
 
     return df_limpo, posicao_corte, posicao_75_clicks, posicao_corte_recomendado, cliques_no_corte_recomendado, ponto_otimo, col_posicao, col_views, col_clicks
 
-# Lógica de Renderização do Site
+# Lógica de Renderização da Aplicação Web
 if ficheiro_carregado is not None:
     try:
-        # Ler o arquivo pulando a validação inicial de cabeçalho para o parser nativo do Streamlit
-        # Lemos como object para garantir a manipulação limpa de texto nas linhas iniciais de comentários do GA4
-        df_input = pd.read_csv(ficheiro_carregado, header=None, index_col=False)
+        # CORREÇÃO CRÍTICA: Ler o ficheiro como linhas de texto descodificado (UTF-8)
+        # Isto evita passar o CSV bruto diretamente para o pd.read_csv e contorna o erro de tokenização
+        linhas_ficheiro = [linha.decode("utf-8") for linha in ficheiro_carregado.readlines()]
         
-        # Executar o motor de processamento matemático
-        df, pos_corte, pos_75, pos_recomendada, cliques_rec, p_otimo, col_pos, col_v, col_c = analisar_eficiencia_com_dados(df_input)
+        # Executar o motor de processamento matemático passando as linhas brutas
+        df, pos_corte, pos_75, pos_recomendada, cliques_rec, p_otimo, col_pos, col_v, col_c = analisar_eficiencia_com_dados(linhas_ficheiro)
         
-        # --- PASSO 1: RENDERIZAR MÉTRICAS EM FORMATO DE DASHBOARD (KPI CARDS) ---
+        # --- PASSO 1: DASHBOARD DE MÉTRICAS (KPI CARDS) ---
         st.subheader("📊 Resultados e Diretrizes para o Salesforce (SFCC)")
         col1, col2, col3 = st.columns(3)
         
@@ -109,7 +105,6 @@ if ficheiro_carregado is not None:
             st.caption("A partir desta posição o tráfego restante torna-se residual.")
             
         with col3:
-            # Grande destaque visual para a recomendação final de negócio
             st.markdown(f"""
             <div style="background-color:#b91c1c;padding:12px;border-radius:8px;text-align:center;">
                 <p style="margin:0;font-size:14px;font-weight:bold;color:white;text-transform:uppercase;">Cutoff Parfois Recomendado</p>
@@ -118,11 +113,11 @@ if ficheiro_carregado is not None:
             """, unsafe_allow_html=True)
             st.caption(f"Arredondado para 2 colunas. Garante manualmente **{cliques_rec:.1f}%** de todos os cliques úteis.")
 
-        st.markdown(f"**Nota operacional para a equipa de Merchandising:** Devem fixar produtos com *pins* manuais até à **Posição {pos_recomendada}**. Da posição seguinte em diante, removam qualquer bloqueio estático para que o algoritmo do Salesforce reordene a página automaticamente com base em stock e *Sales Velocity* (automatizando os restantes **{(100-cliques_rec):.1f}%** de cliques).")
+        st.info(f"**Nota operacional para a equipa de Merchandising:** Devem fixar produtos com *pins* manuais até à **Posição {pos_recomendada}**. Da posição seguinte em diante, removam qualquer bloqueio estático para que o algoritmo do Salesforce reordene a página automaticamente com base em stock e *Sales Velocity* (automatizando os restantes **{(100-cliques_rec):.1f}%** de cliques).")
         st.markdown("---")
 
         # --- PASSO 2: GERAR E MOSTRAR O GRÁFICO DIRETAMENTE NA PÁGINA ---
-        st.subheader("📈 Análise Visual das Curvas de Acumulação")
+        st.subheader("📈 Análise Visual das Curvas de Acumulação (Foco Total nas Linhas Verticais)")
         
         sns.set_theme(style="whitegrid")
         fig, ax1 = plt.subplots(figsize=(12, 5.5))
@@ -132,7 +127,7 @@ if ficheiro_carregado is not None:
         limite_eixo_x = max(limite_eixo_x + 30, 120) 
         df_visualizacao = df[df[col_pos] <= limite_eixo_x]
 
-        # Desenhar curvas suavizadas de acumulação
+        # Desenhar curvas suavizadas de acumulação (Sem marcadores e limpas)
         ax1.plot(df_visualizacao[col_pos], df_visualizacao['cum_clicks_pct'], color='#1e6b27', label='% Cliques Acumulados', linewidth=2.5)
         ax1.plot(df_visualizacao[col_pos], df_visualizacao['cum_views_pct'], color='#1d4ed8', label='% Visualizações Acumuladas', linewidth=2.5)
 
@@ -142,7 +137,7 @@ if ficheiro_carregado is not None:
         ax1.set_xlim(-2, limite_eixo_x)
         ax1.tick_params(axis='both', which='major', labelsize=9)
 
-        # Traçar barreiras verticais nítidas de diagnóstico
+        # Traçar barreiras verticais nítidas e fortemente demarcadas de diagnóstico
         ax1.axvline(x=pos_corte, color='#d97706', linestyle='--', linewidth=3.0, alpha=0.9, label=f'Eficiência Máxima (Pos. {pos_corte})')
         ax1.axvline(x=pos_75, color='#6b21a8', linestyle=':', linewidth=3.0, alpha=0.9, label=f'Meta 75% Cliques (Pos. {pos_75})')
         ax1.axvline(x=pos_recomendada, color='#dc2626', linestyle='-.', linewidth=5.0, label=f'CUTOFF PARFOIS (Pos. {pos_recomendada})')
@@ -170,11 +165,10 @@ if ficheiro_carregado is not None:
         ax1.legend(loc='lower right', frameon=True, facecolor='white', edgecolor='#e5e7eb', fontsize=9)
         plt.tight_layout()
         
-        # O Streamlit renderiza o gráfico de Matplotlib nativamente na página web
+        # Renderizar o gráfico nativamente na interface web do Streamlit
         st.pyplot(fig)
         
     except Exception as e:
         st.error(f"Ocorreu um erro ao processar o ficheiro: {e}. Certifica-te de que carregaste um relatório padrão do GA4.")
 else:
-    # Estado inicial do site quando ainda não foi feito nenhum upload
     st.info("Aguardando upload do ficheiro CSV na barra lateral para iniciar a análise.")
