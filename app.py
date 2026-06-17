@@ -154,12 +154,16 @@ def gerar_overview_dict(catalogo):
             dados_out[cat_nome] = res
     return dados_out
 
-# Formatações Visuais para Tabelas
+# Formatações Visuais - AGORA COM EVOLUÇÃO RELATIVA ((Novo-Velho)/Velho)
 def format_ctr_current_and_diff(ctr_at, ctr_an):
-    diff = ctr_at - ctr_an
-    if diff > 0: return f"{ctr_at:.2f}% (🟢 +{diff:.2f}%)"
-    elif diff < 0: return f"{ctr_at:.2f}% (🔴 {diff:.2f}%)"
-    return f"{ctr_at:.2f}% (➖ {diff:.2f}%)"
+    if ctr_an == 0:
+        return f"{ctr_at:.2f}% (N/A)"
+    
+    diff_relativa = ((ctr_at - ctr_an) / ctr_an) * 100
+    
+    if diff_relativa > 0: return f"{ctr_at:.2f}% (🟢 +{diff_relativa:.2f}%)"
+    elif diff_relativa < 0: return f"{ctr_at:.2f}% (🔴 {diff_relativa:.2f}%)"
+    return f"{ctr_at:.2f}% (➖ {diff_relativa:.2f}%)"
 
 def format_pos_diff(val):
     if val > 0: return f"⬇️ Mais {val} Linhas"
@@ -273,7 +277,7 @@ if file_atual is not None:
                     dados_comp.append({
                         "Categoria": cat,
                         "CTR Anterior": f"{ctr_an:.2f}%",
-                        "CTR Atual (Evolução)": format_ctr_current_and_diff(ctr_at, ctr_an),
+                        "CTR Atual (Evol. Relativa)": format_ctr_current_and_diff(ctr_at, ctr_an),
                         "Cutoff Anterior": f"Pos {prec_an}",
                         "Cutoff Atual": f"Pos {prec_at}",
                         "Variação Cutoff": format_pos_diff(prec_at - prec_an)
@@ -291,14 +295,16 @@ if file_atual is not None:
                 df_at, tv_at, tc_at, pc_at, p75_at, prec_at, crec_at, p_ot_at = dict_atual[cat_comp]
                 df_an, tv_an, tc_an, pc_an, p75_an, prec_an, crec_an, p_ot_an = dict_antigo[cat_comp]
                 
-                ctr_at_cat = (tc_at / tv_at * 100)
-                ctr_an_cat = (tc_an / tv_an * 100)
+                ctr_at_cat = (tc_at / tv_at * 100) if tv_at > 0 else 0
+                ctr_an_cat = (tc_an / tv_an * 100) if tv_an > 0 else 0
+                
+                diff_relativa_cat = ((ctr_at_cat - ctr_an_cat) / ctr_an_cat * 100) if ctr_an_cat > 0 else 0
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.metric(label=f"CTR Médio Global ({cat_comp})", value=f"{ctr_at_cat:.2f}%", delta=f"{ctr_at_cat - ctr_an_cat:.2f}% (Pontos Perc.)")
+                    st.metric(label=f"CTR Médio Global ({cat_comp})", value=f"{ctr_at_cat:.2f}%", delta=f"{diff_relativa_cat:.2f}% (Evolução Relativa)")
                 with col2:
-                    st.info("💡 **Como ler o gráfico abaixo:** Barras Verdes indicam que os produtos nessas posições converteram melhor agora do que no período anterior. Barras Vermelhas indicam perda de interesse visual (necessidade de trocar os produtos manuais).")
+                    st.info("💡 **Como ler o gráfico abaixo:** Barras Verdes indicam que os produtos nessas posições converteram melhor agora do que no período anterior. Barras Vermelhas indicam perda de interesse visual (necessidade de trocar os produtos).")
                 
                 # Gráfico de Variação de CTR Posicional
                 df_at['ctr_pos'] = (df_at['Items clicked in list'] / df_at['Items viewed in list'] * 100).fillna(0)
@@ -306,6 +312,7 @@ if file_atual is not None:
                 
                 m_diff = pd.merge(df_at[['Item list position', 'ctr_pos']], df_an[['Item list position', 'ctr_pos']], 
                                   on='Item list position', suffixes=('_atual', '_anterior'))
+                # Mantido em p.p para evitar que a posição 15 com 1 clique rebente o gráfico com +300%
                 m_diff['diff_ctr'] = m_diff['ctr_pos_atual'] - m_diff['ctr_pos_anterior']
                 
                 limite_diff = max(prec_at, prec_an) + 12
@@ -319,7 +326,7 @@ if file_atual is not None:
                 ax_diff.axvline(x=prec_at, color='#dc2626', linestyle='-.', linewidth=2, label=f'Cutoff Atual (Pos. {prec_at})')
                 
                 ax_diff.set_xlabel('Posição na Listagem (Grelha Parfois)', fontsize=11, fontweight='bold')
-                ax_diff.set_ylabel('Variação Absoluta de CTR (%)', fontsize=11, fontweight='bold')
+                ax_diff.set_ylabel('Variação Absoluta de CTR (p.p.)', fontsize=11, fontweight='bold')
                 ax_diff.set_title(f'Balanço de Eficiência Posicional ({data_atual_str}) vs Anterior', fontsize=12, fontweight='bold')
                 ax_diff.legend(loc='upper right', frameon=True, facecolor='white')
                 
