@@ -13,13 +13,31 @@ st.set_page_config(
 )
 
 st.title("🎯 Parfois - Centro de Otimização & Evolução de PLPs")
-st.markdown("Auditoria de eficiência, cutoffs móveis e evolução relativa de CTR (Exclusivo para PLPs Principais).")
+st.markdown("Auditoria de eficiência, cutoffs móveis e evolução relativa de CTR temporal (Exclusivo para PLPs Principais).")
 st.markdown("---")
 
 # Componente Lateral de Upload de Ficheiros
 st.sidebar.header("⚙️ Configurações de Entrada")
-file_atual = st.sidebar.file_uploader("1. Ficheiro Período Atual (Obrigatório)", type=["csv"], key="actual")
-file_antigo = st.sidebar.file_uploader("2. Ficheiro Período Anterior (Opcional - Evolução)", type=["csv"], key="historical")
+file_1 = st.sidebar.file_uploader("1. Ficheiro Período Atual", type=["csv"], key="file1")
+file_2 = st.sidebar.file_uploader("2. Ficheiro Período Anterior (Para Evolução)", type=["csv"], key="file2")
+
+# Checkbox mágica para inverter ficheiros caso o upload tenha sido feito ao contrário
+inverter_arquivos = st.sidebar.checkbox("🔄 Inverter Ficheiros (Atual ↔ Anterior)")
+
+# Lógica de Inversão
+file_atual = file_2 if inverter_arquivos else file_1
+file_antigo = file_1 if inverter_arquivos else file_2
+
+def extrair_datas_ga4(linhas):
+    """Lê as primeiras linhas e extrai o período de datas no formato dd/mm/aaaa a dd/mm/aaaa"""
+    for linha in linhas[:15]:
+        match = re.search(r'(\d{8})-(\d{8})', linha)
+        if match:
+            d1, d2 = match.groups()
+            inicio = f"{d1[6:8]}/{d1[4:6]}/{d1[:4]}"
+            fim = f"{d2[6:8]}/{d2[4:6]}/{d2[:4]}"
+            return f"{inicio} a {fim}"
+    return "Período Não Detetado"
 
 def parse_ga4_universal(linhas_brutas):
     """Motor Híbrido com Regex estrita para isolar as 12 categorias de foco Parfois."""
@@ -38,7 +56,6 @@ def parse_ga4_universal(linhas_brutas):
     is_wide_layout = len(linha_superior) > 1 and 'Item list name' in linha_superior[0]
     cat_dict = {}
     
-    # REGEX ESTRITA DA PARFOIS (Apenas este grupo fechado de 12 categorias)
     padrao_regex = re.compile(r"^PLP - (Bags|New In|Clothing|Shoes|Jewellery|Wallets|Watches|Accessories|Leather|Stainless Steel|925 Sterling Silver|Travel Bags)$")
     
     if is_wide_layout:
@@ -96,7 +113,6 @@ def parse_ga4_universal(linhas_brutas):
     return cat_dict, None
 
 def calcular_metricas_categoria(df_cat):
-    """Calcula eficiências matemáticas garantindo o pacote completo de 8 variáveis de retorno."""
     df_f = df_cat.copy()
     df_f['Item list position'] = pd.to_numeric(df_f['Item list position'], errors='coerce')
     df_f['Items viewed in list'] = pd.to_numeric(df_f['Items viewed in list'], errors='coerce')
@@ -138,15 +154,16 @@ def gerar_overview_dict(catalogo):
             dados_out[cat_nome] = res
     return dados_out
 
-# Funções Visuais para Tabelas
-def format_ctr_diff(val):
-    if val > 0: return f"🟢 +{val:.2f}%"
-    elif val < 0: return f"🔴 {val:.2f}%"
-    return f"➖ {val:.2f}%"
+# Formatações Visuais para Tabelas
+def format_ctr_current_and_diff(ctr_at, ctr_an):
+    diff = ctr_at - ctr_an
+    if diff > 0: return f"{ctr_at:.2f}% (🟢 +{diff:.2f}%)"
+    elif diff < 0: return f"{ctr_at:.2f}% (🔴 {diff:.2f}%)"
+    return f"{ctr_at:.2f}% (➖ {diff:.2f}%)"
 
 def format_pos_diff(val):
-    if val > 0: return f"⬇️ Mais {val} Linhas (Mais Profundo)"
-    elif val < 0: return f"⬆️ Menos {abs(val)} Linhas (Mais Curto)"
+    if val > 0: return f"⬇️ Mais {val} Linhas"
+    elif val < 0: return f"⬆️ Menos {abs(val)} Linhas"
     return "➖ Manteve"
 
 # Fluxo de Renderização Principal
@@ -154,15 +171,18 @@ if file_atual is not None:
     try:
         # 1. Processar Ficheiro Atual
         linhas_atual = [l.decode("utf-8") for l in file_atual.readlines()]
+        data_atual_str = extrair_datas_ga4(linhas_atual)
         cat_atual, err_at = parse_ga4_universal(linhas_atual)
         if err_at: st.error(err_at); st.stop()
-        if not cat_atual: st.error("Erro: Nenhuma categoria válida da lista das 12 principais encontrada no ficheiro atual."); st.stop()
+        if not cat_atual: st.error("Erro: Nenhuma categoria válida da lista das 12 principais encontrada."); st.stop()
         dict_atual = gerar_overview_dict(cat_atual)
         
         # 2. Processar Ficheiro Antigo (Se fornecido)
         dict_antigo = None
+        data_antigo_str = ""
         if file_antigo is not None:
             linhas_antigo = [l.decode("utf-8") for l in file_antigo.readlines()]
+            data_antigo_str = extrair_datas_ga4(linhas_antigo)
             cat_antigo, err_an = parse_ga4_universal(linhas_antigo)
             if not err_an and cat_antigo:
                 dict_antigo = gerar_overview_dict(cat_antigo)
@@ -187,13 +207,13 @@ if file_atual is not None:
         # --- DEFINIÇÃO DAS ABAS INTERACTIVAS ---
         abas = ["🌍 Overview Atual", "📈 Análise Individual"]
         if dict_antigo:
-            abas.append("🔄 Evolução Visual MoM")
+            abas.append("🔄 Evolução Temporal")
             
         tabs = st.tabs(abas)
         
         # ---- TAB 1: OVERVIEW ATUAL ----
         with tabs[0]:
-            st.subheader("📋 Matriz Operacional de Catálogo (Mês Atual)")
+            st.subheader(f"📋 Matriz Operacional de Catálogo ({data_atual_str})")
             st.dataframe(df_overview, use_container_width=True)
 
         # ---- TAB 2: ANÁLISE INDIVIDUAL ----
@@ -201,14 +221,13 @@ if file_atual is not None:
             lista_opcoes = sorted(list(dict_atual.keys()))
             categoria_selecionada = st.selectbox("Escolha a Categoria Principal para inspecionar:", lista_opcoes)
             
-            # Correção do erro de unpacking (Agora recebe perfeitamente os 8 elementos!)
             df_filtrado, tv, tc, pos_corte, pos_75, pos_recomendada, cliques_rec, ponto_otimo = dict_atual[categoria_selecionada]
             
             c1, c2, c3 = st.columns(3)
             with c1:
-                st.metric(label="Eficiência Máxima", value=f"Posição {pos_corte}", help="Onde o cliente demonstra maior interesse perante a visualização.")
+                st.metric(label="Eficiência Máxima", value=f"Posição {pos_corte}")
             with c2:
-                st.metric(label="Meta 75% Cliques", value=f"Posição {pos_75}", help="A cauda longa perde relevância a partir daqui.")
+                st.metric(label="Meta 75% Cliques", value=f"Posição {pos_75}")
             with c3:
                 st.markdown(f'<div style="background-color:#b91c1c;padding:12px;border-radius:8px;text-align:center;"><p style="margin:0;font-size:12px;font-weight:bold;color:white;text-transform:uppercase;">Cutoff SFCC Recomendado</p><h2 style="margin:0;color:white;font-size:28px;font-weight:bold;">Posição {pos_recomendada}</h2></div>', unsafe_allow_html=True)
                 st.caption(f"Captura de **{cliques_rec:.1f}%** das intenções garantidas.")
@@ -239,9 +258,9 @@ if file_atual is not None:
         # ---- TAB 3: EVOLUÇÃO TEMPORAL (VISUAL & RELATIVA) ----
         if dict_antigo:
             with tabs[2]:
-                st.subheader("🔄 Painel Visual de Evolução Month-over-Month")
+                st.subheader(f"🔄 Painel Visual de Evolução Temporal")
+                st.markdown(f"**Comparação de Períodos:** _{data_antigo_str}_ **➡️** _{data_atual_str}_")
                 
-                # Matriz Comparativa Visual Global
                 lista_comum = sorted(list(set(dict_atual.keys()).intersection(set(dict_antigo.keys()))))
                 dados_comp = []
                 for cat in lista_comum:
@@ -253,14 +272,15 @@ if file_atual is not None:
                     
                     dados_comp.append({
                         "Categoria": cat,
-                        "CTR Atual": f"{ctr_at:.2f}%",
-                        "Evolução CTR (MoM)": format_ctr_diff(ctr_at - ctr_an),
-                        "Novo Cutoff": f"Posição {prec_at}",
-                        "Variação de Cutoff": format_pos_diff(prec_at - prec_an)
+                        "CTR Anterior": f"{ctr_an:.2f}%",
+                        "CTR Atual (Evolução)": format_ctr_current_and_diff(ctr_at, ctr_an),
+                        "Cutoff Anterior": f"Pos {prec_an}",
+                        "Cutoff Atual": f"Pos {prec_at}",
+                        "Variação Cutoff": format_pos_diff(prec_at - prec_an)
                     })
                 
                 df_comp_visual = pd.DataFrame(dados_comp)
-                st.markdown("#### 🌍 1. Overview Global de Performance (Todas as Categorias)")
+                st.markdown("#### 🌍 1. Overview Global de Performance")
                 st.dataframe(df_comp_visual, use_container_width=True)
                 
                 st.markdown("---")
@@ -278,7 +298,7 @@ if file_atual is not None:
                 with col1:
                     st.metric(label=f"CTR Médio Global ({cat_comp})", value=f"{ctr_at_cat:.2f}%", delta=f"{ctr_at_cat - ctr_an_cat:.2f}% (Pontos Perc.)")
                 with col2:
-                    st.info("💡 **Como ler o gráfico abaixo:** Barras Verdes indicam que os produtos nessas posições converteram melhor este mês do que no mês passado. Barras Vermelhas indicam perda de interesse visual (necessidade de trocar os produtos manuais).")
+                    st.info("💡 **Como ler o gráfico abaixo:** Barras Verdes indicam que os produtos nessas posições converteram melhor agora do que no período anterior. Barras Vermelhas indicam perda de interesse visual (necessidade de trocar os produtos manuais).")
                 
                 # Gráfico de Variação de CTR Posicional
                 df_at['ctr_pos'] = (df_at['Items clicked in list'] / df_at['Items viewed in list'] * 100).fillna(0)
@@ -300,7 +320,7 @@ if file_atual is not None:
                 
                 ax_diff.set_xlabel('Posição na Listagem (Grelha Parfois)', fontsize=11, fontweight='bold')
                 ax_diff.set_ylabel('Variação Absoluta de CTR (%)', fontsize=11, fontweight='bold')
-                ax_diff.set_title(f'Balanço de Eficiência Posicional (Mês Atual vs Mês Anterior) - {cat_comp}', fontsize=12, fontweight='bold')
+                ax_diff.set_title(f'Balanço de Eficiência Posicional ({data_atual_str}) vs Anterior', fontsize=12, fontweight='bold')
                 ax_diff.legend(loc='upper right', frameon=True, facecolor='white')
                 
                 plt.tight_layout()
