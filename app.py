@@ -12,20 +12,17 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🎯 Parfois - Centro de Otimização & Evolução Relativa de PLPs")
-st.markdown("Carrega até dois relatórios do GA4 para mapear a eficiência atual e auditar a evolução de performance com base estrita em métricas relativas.")
+st.title("🎯 Parfois - Centro de Otimização & Evolução de PLPs")
+st.markdown("Auditoria de eficiência, cutoffs móveis e evolução relativa de CTR (Exclusivo para PLPs Principais).")
 st.markdown("---")
 
 # Componente Lateral de Upload de Ficheiros
 st.sidebar.header("⚙️ Configurações de Entrada")
 file_atual = st.sidebar.file_uploader("1. Ficheiro Período Atual (Obrigatório)", type=["csv"], key="actual")
-file_antigo = st.sidebar.file_uploader("2. Ficheiro Período Anterior (Opcional - Para Evolução)", type=["csv"], key="historical")
+file_antigo = st.sidebar.file_uploader("2. Ficheiro Período Anterior (Opcional - Evolução)", type=["csv"], key="historical")
 
 def parse_ga4_universal(linhas_brutas):
-    """
-    Motor Híbrido: Detecta o formato do ficheiro, aplica o filtro estrito de Regex
-    para isolar apenas as PLPs principais e constrói as tabelas na memória.
-    """
+    """Motor Híbrido com Regex estrita para isolar as 12 categorias de foco Parfois."""
     idx_pos = None
     for idx, linha in enumerate(linhas_brutas):
         if 'Item list position' in linha:
@@ -41,11 +38,10 @@ def parse_ga4_universal(linhas_brutas):
     is_wide_layout = len(linha_superior) > 1 and 'Item list name' in linha_superior[0]
     cat_dict = {}
     
-    # Expressão Regular Estrita: Começa com 'PLP - ' e NÃO contém '/'
-    padrao_regex = re.compile(r"^PLP - [^/]+$")
+    # REGEX ESTRITA DA PARFOIS (Apenas este grupo fechado de 12 categorias)
+    padrao_regex = re.compile(r"^PLP - (Bags|New In|Clothing|Shoes|Jewellery|Wallets|Watches|Accessories|Leather|Stainless Steel|925 Sterling Silver|Travel Bags)$")
     
     if is_wide_layout:
-        # --- LAYOUT MATRIZ HORIZONTAL (WIDE) ---
         category_columns = {}
         for i in range(1, len(linha_superior)-1, 2):
             c_name = linha_superior[i]
@@ -76,7 +72,6 @@ def parse_ga4_universal(linhas_brutas):
                 cat_dict[c_name] = df_cat
                 
     else:
-        # --- LAYOUT VERTICAL ANTIGO ---
         linhas_dados = []
         for linha in linhas_brutas[idx_pos+1:]:
             partes = [p.strip() for p in linha.strip().split(',')]
@@ -101,7 +96,7 @@ def parse_ga4_universal(linhas_brutas):
     return cat_dict, None
 
 def calcular_metricas_categoria(df_cat):
-    """Auxiliar para limpar dados e calcular marcos decisórios de uma categoria."""
+    """Calcula eficiências matemáticas garantindo o pacote completo de 8 variáveis de retorno."""
     df_f = df_cat.copy()
     df_f['Item list position'] = pd.to_numeric(df_f['Item list position'], errors='coerce')
     df_f['Items viewed in list'] = pd.to_numeric(df_f['Items viewed in list'], errors='coerce')
@@ -136,7 +131,6 @@ def calcular_metricas_categoria(df_cat):
     return df_f, t_views, t_clicks, pos_corte, pos_75, pos_recomendada, cliques_rec, ponto_otimo
 
 def gerar_overview_dict(catalogo):
-    """Gera o dicionário estruturado com as métricas calculadas por categoria."""
     dados_out = {}
     for cat_nome, df_bruto in catalogo.items():
         res = calcular_metricas_categoria(df_bruto)
@@ -144,13 +138,25 @@ def gerar_overview_dict(catalogo):
             dados_out[cat_nome] = res
     return dados_out
 
-# Execução Condicional do Dashboard
+# Funções Visuais para Tabelas
+def format_ctr_diff(val):
+    if val > 0: return f"🟢 +{val:.2f}%"
+    elif val < 0: return f"🔴 {val:.2f}%"
+    return f"➖ {val:.2f}%"
+
+def format_pos_diff(val):
+    if val > 0: return f"⬇️ Mais {val} Linhas (Mais Profundo)"
+    elif val < 0: return f"⬆️ Menos {abs(val)} Linhas (Mais Curto)"
+    return "➖ Manteve"
+
+# Fluxo de Renderização Principal
 if file_atual is not None:
     try:
         # 1. Processar Ficheiro Atual
         linhas_atual = [l.decode("utf-8") for l in file_atual.readlines()]
         cat_atual, err_at = parse_ga4_universal(linhas_atual)
         if err_at: st.error(err_at); st.stop()
+        if not cat_atual: st.error("Erro: Nenhuma categoria válida da lista das 12 principais encontrada no ficheiro atual."); st.stop()
         dict_atual = gerar_overview_dict(cat_atual)
         
         # 2. Processar Ficheiro Antigo (Se fornecido)
@@ -158,72 +164,56 @@ if file_atual is not None:
         if file_antigo is not None:
             linhas_antigo = [l.decode("utf-8") for l in file_antigo.readlines()]
             cat_antigo, err_an = parse_ga4_universal(linhas_antigo)
-            if not err_an:
+            if not err_an and cat_antigo:
                 dict_antigo = gerar_overview_dict(cat_antigo)
 
-        # 3. Construir Dataframe de Overview do Período Atual
+        # 3. Construir Tabela de Overview Atual
         dados_overview = []
         for cat_nome, res in dict_atual.items():
             _, tv, tc, pc, p75, prec, crec, _ = res
             ctr = (tc / tv * 100) if tv > 0 else 0
-            
-            row = {
-                "Categoria Principal": cat_nome,
-                "Visualizações Totais": tv,
-                "Cliques Totais": tc,
-                "CTR Geral (%)": round(ctr, 3),
-                "Eficiência Máxima": f"Pos {pc}",
-                "Marco 75% Cliques": f"Pos {p75}",
-                "CUTOFF RECOMENDADO (SFCC)": prec,
-                "% Cliques Garantidos": f"{crec:.1f}%"
-            }
-            
-            if dict_antigo and cat_nome in dict_antigo:
-                _, _, _, _, _, prec_antigo, _, _ = dict_antigo[cat_nome]
-                row["Cutoff Anterior"] = prec_antigo
-                row["Variação Cutoff"] = prec - prec_antigo
-                
-            dados_overview.append(row)
-            
-        df_overview = pd.DataFrame(dados_overview).sort_values(by="Cliques Totais", ascending=False).reset_index(drop=True)
+            dados_overview.append({
+                "Categoria": cat_nome,
+                "Visualizações": tv,
+                "Cliques": tc,
+                "CTR Geral (%)": round(ctr, 2),
+                "Eficiência (Zénite)": f"Pos {pc}",
+                "Marco 75%": f"Pos {p75}",
+                "CUTOFF PARFOIS": prec,
+                "Captura (%)": f"{crec:.1f}%"
+            })
+        df_overview = pd.DataFrame(dados_overview).sort_values(by="Cliques", ascending=False).reset_index(drop=True)
 
         # --- DEFINIÇÃO DAS ABAS INTERACTIVAS ---
-        abas = ["🌍 Overview Global", "📈 Análise por Categoria"]
+        abas = ["🌍 Overview Atual", "📈 Análise Individual"]
         if dict_antigo:
-            abas.append("🔄 Evolução Relativa MoM")
+            abas.append("🔄 Evolução Visual MoM")
             
         tabs = st.tabs(abas)
         
-        # ---- TAB 1: OVERVIEW GLOBAL ----
+        # ---- TAB 1: OVERVIEW ATUAL ----
         with tabs[0]:
-            st.subheader("📊 Matriz Geral de Decisões de Catálogo (Período Atual)")
+            st.subheader("📋 Matriz Operacional de Catálogo (Mês Atual)")
             st.dataframe(df_overview, use_container_width=True)
-            st.download_button(
-                label="📥 Exportar Matriz Geral (CSV)",
-                data=df_overview.to_csv(index=False).encode('utf-8'),
-                file_name="matriz_cutoffs_parfois.csv",
-                mime="text/csv"
-            )
 
-        # ---- TAB 2: ANÁLISE POR CATEGORIA INDIVIDUAL ----
+        # ---- TAB 2: ANÁLISE INDIVIDUAL ----
         with tabs[1]:
             lista_opcoes = sorted(list(dict_atual.keys()))
-            categoria_selecionada = st.selectbox("Escolha a Categoria Principal para inspeção:", lista_opcoes)
+            categoria_selecionada = st.selectbox("Escolha a Categoria Principal para inspecionar:", lista_opcoes)
             
-            df_filtrado, pos_corte, pos_75, pos_recomendada, cliques_rec, ponto_otimo = dict_atual[categoria_selecionada][:6]
+            # Correção do erro de unpacking (Agora recebe perfeitamente os 8 elementos!)
+            df_filtrado, tv, tc, pos_corte, pos_75, pos_recomendada, cliques_rec, ponto_otimo = dict_atual[categoria_selecionada]
             
             c1, c2, c3 = st.columns(3)
             with c1:
-                st.metric(label="Eficiência Matemática Máxima", value=f"Posição {pos_corte}")
+                st.metric(label="Eficiência Máxima", value=f"Posição {pos_corte}", help="Onde o cliente demonstra maior interesse perante a visualização.")
             with c2:
-                st.metric(label="Meta 75% dos Cliques Úteis", value=f"Posição {pos_75}")
+                st.metric(label="Meta 75% Cliques", value=f"Posição {pos_75}", help="A cauda longa perde relevância a partir daqui.")
             with c3:
-                st.markdown(f'<div style="background-color:#b91c1c;padding:12px;border-radius:8px;text-align:center;"><p style="margin:0;font-size:12px;font-weight:bold;color:white;text-transform:uppercase;">Cutoff Mobile Recomendado</p><h2 style="margin:0;color:white;font-size:28px;font-weight:bold;">Posição {pos_recomendada}</h2></div>', unsafe_allow_html=True)
-                st.caption(f"Garante a captura manual de **{cliques_rec:.1f}%** das intenções de clique.")
+                st.markdown(f'<div style="background-color:#b91c1c;padding:12px;border-radius:8px;text-align:center;"><p style="margin:0;font-size:12px;font-weight:bold;color:white;text-transform:uppercase;">Cutoff SFCC Recomendado</p><h2 style="margin:0;color:white;font-size:28px;font-weight:bold;">Posição {pos_recomendada}</h2></div>', unsafe_allow_html=True)
+                st.caption(f"Captura de **{cliques_rec:.1f}%** das intenções garantidas.")
 
-            st.info(f"**Diretriz Operacional:** Fixar produtos manualmente via *pins* até à **Posição {pos_recomendada}**. A partir daí, o Salesforce (SFCC) assume a automação inteligente do restante catálogo (gerindo os restantes **{(100-cliques_rec):.1f}%** de cliques).")
-
-            # Gráfico Principal Suavizado
+            # Gráfico Principal
             sns.set_theme(style="whitegrid")
             fig, ax1 = plt.subplots(figsize=(12, 5.2))
             limite_x = max(pos_corte, pos_75, pos_recomendada) + 30
@@ -240,50 +230,57 @@ if file_atual is not None:
             ax1.axvline(x=pos_75, color='#6b21a8', linestyle=':', linewidth=3.0, alpha=0.9, label=f'Meta 75% Cliques (Pos. {pos_75})')
             ax1.axvline(x=pos_recomendada, color='#dc2626', linestyle='-.', linewidth=5.0, label=f'CUTOFF PARFOIS (Pos. {pos_recomendada})')
 
-            ax1.annotate(f'Eficiência Máxima: Pos {pos_corte}\nΔ = {ponto_otimo["eficiencia_marginal"]:.2f}%', xy=(pos_corte, ponto_otimo['cum_clicks_pct']), xytext=(pos_corte + (limite_x * 0.04), ponto_otimo['cum_clicks_pct'] - 22), arrowprops=dict(facecolor='#d97706', edgecolor='#d97706', shrink=0.05, width=1.5, headwidth=5, headlength=5), fontweight='bold', fontsize=9, bbox=dict(boxstyle="round,pad=0.3", fc="#fef3c7", alpha=0.95, ec="#d97706", lw=1.5))
-            ax1.annotate(f'RECOMENDADO: Posição {pos_recomendada}\nCaptura: {cliques_rec:.1f}%', xy=(pos_recomendada, cliques_rec), xytext=(pos_recomendada - (limite_x * 0.22), 103), arrowprops=dict(facecolor='#dc2626', edgecolor='#dc2626', shrink=0.05, width=2.5, headwidth=7, headlength=7), fontweight='bold', fontsize=10, color='white', bbox=dict(boxstyle="round,pad=0.4", fc="#b91c1c", alpha=1, ec="#7f1d1d", lw=2))
+            ax1.annotate(f'Eficiência: Pos {pos_corte}\nΔ={ponto_otimo["eficiencia_marginal"]:.2f}%', xy=(pos_corte, ponto_otimo['cum_clicks_pct']), xytext=(pos_corte + (limite_x * 0.04), ponto_otimo['cum_clicks_pct'] - 22), arrowprops=dict(facecolor='#d97706', edgecolor='#d97706', shrink=0.05, width=1.5, headwidth=5, headlength=5), fontweight='bold', fontsize=9, bbox=dict(boxstyle="round,pad=0.3", fc="#fef3c7", alpha=0.95, ec="#d97706", lw=1.5))
+            ax1.annotate(f'RECOMENDADO: Posição {pos_recomendada}', xy=(pos_recomendada, cliques_rec), xytext=(pos_recomendada - (limite_x * 0.22), 103), arrowprops=dict(facecolor='#dc2626', edgecolor='#dc2626', shrink=0.05, width=2.5, headwidth=7, headlength=7), fontweight='bold', fontsize=10, color='white', bbox=dict(boxstyle="round,pad=0.4", fc="#b91c1c", alpha=1, ec="#7f1d1d", lw=2))
             ax1.legend(loc='lower right', frameon=True, facecolor='white', edgecolor='#e5e7eb', fontsize=9)
             plt.tight_layout()
             st.pyplot(fig)
 
-        # ---- TAB 3: EVOLUÇÃO TEMPORAL RELATIVA (EXCLUSIVA) ----
+        # ---- TAB 3: EVOLUÇÃO TEMPORAL (VISUAL & RELATIVA) ----
         if dict_antigo:
             with tabs[2]:
-                st.subheader("🔄 Auditoria de Evolução Month-over-Month (Métricas Relativas)")
-                st.markdown("Esta secção ignora flutuações de tráfego bruto e avalia puramente as mudanças de comportamento e interesse.")
+                st.subheader("🔄 Painel Visual de Evolução Month-over-Month")
                 
+                # Matriz Comparativa Visual Global
                 lista_comum = sorted(list(set(dict_atual.keys()).intersection(set(dict_antigo.keys()))))
-                cat_comp = st.selectbox("Escolha a Categoria para Análise Relativa Comparativa:", lista_comum)
+                dados_comp = []
+                for cat in lista_comum:
+                    _, tv_at, tc_at, _, _, prec_at, _, _ = dict_atual[cat]
+                    _, tv_an, tc_an, _, _, prec_an, _, _ = dict_antigo[cat]
+                    
+                    ctr_at = (tc_at / tv_at * 100) if tv_at > 0 else 0
+                    ctr_an = (tc_an / tv_an * 100) if tv_an > 0 else 0
+                    
+                    dados_comp.append({
+                        "Categoria": cat,
+                        "CTR Atual": f"{ctr_at:.2f}%",
+                        "Evolução CTR (MoM)": format_ctr_diff(ctr_at - ctr_an),
+                        "Novo Cutoff": f"Posição {prec_at}",
+                        "Variação de Cutoff": format_pos_diff(prec_at - prec_an)
+                    })
                 
-                # Desempacotar dados
-                df_at, tv_at, tc_at, pc_at, p75_at, prec_at, _, _ = dict_atual[cat_comp]
-                df_an, tv_an, tc_an, pc_an, p75_an, prec_an, _, _ = dict_antigo[cat_comp]
+                df_comp_visual = pd.DataFrame(dados_comp)
+                st.markdown("#### 🌍 1. Overview Global de Performance (Todas as Categorias)")
+                st.dataframe(df_comp_visual, use_container_width=True)
                 
-                ctr_at = (tc_at / tv_at * 100)
-                ctr_an = (tc_an / tv_an * 100)
+                st.markdown("---")
+                st.markdown("#### 🔍 2. Raio-X Posicional de CTR por Categoria")
                 
-                # 1. CARD EXCLUSIVO DE CTR GERAL (A grande métrica de conversão de listagem)
-                st.metric(
-                    label="Evolução do CTR Geral da Categoria", 
-                    value=f"{ctr_at:.3f}%", 
-                    delta=f"{ctr_at - ctr_an:.3f}% (Pontos Percentuais)"
-                )
+                cat_comp = st.selectbox("Escolha a Categoria para auditar o comportamento do CTR posição a posição:", lista_comum)
                 
-                # 2. COMPARATIVO RELATIVO DAS LINHAS DE CORTE
-                st.markdown("#### 📏 Deslocamento Posicional dos Marcos de Eficiência")
-                dados_linhas = {
-                    "Métrica de Diretriz": ["Eficiência Matemática Máxima", "Marco de Volume (75% Cliques)", "CUTOFF RECOMENDADO PARFOIS"],
-                    "Período Anterior": [f"Posição {pc_an}", f"Posição {p75_an}", f"Posição {prec_an}"],
-                    "Período Atual": [f"Posição {pc_at}", f"Posição {p75_at}", f"Posição {prec_at}"],
-                    "Variação Líquida": [f"{pc_at - pc_an} posições", f"{p75_at - p75_an} posições", f"{prec_at - prec_an} posições"]
-                }
-                st.table(pd.DataFrame(dados_linhas))
+                df_at, tv_at, tc_at, pc_at, p75_at, prec_at, crec_at, p_ot_at = dict_atual[cat_comp]
+                df_an, tv_an, tc_an, pc_an, p75_an, prec_an, crec_an, p_ot_an = dict_antigo[cat_comp]
                 
-                # 3. GRÁFICO DE GANHO/PERDA DE CTR POSICIONAL
-                st.markdown("#### 🔍 Balanço de Interesse Posicional (Ganho ou Perda Líquida de CTR)")
-                st.markdown("Este gráfico indica se a escolha de produtos feita para cada posição resultou num ganho real de interesse (verde para cima) ou perda de tração (vermelho para baixo) face ao mês passado.")
+                ctr_at_cat = (tc_at / tv_at * 100)
+                ctr_an_cat = (tc_an / tv_an * 100)
                 
-                # Calcular CTR por posição
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric(label=f"CTR Médio Global ({cat_comp})", value=f"{ctr_at_cat:.2f}%", delta=f"{ctr_at_cat - ctr_an_cat:.2f}% (Pontos Perc.)")
+                with col2:
+                    st.info("💡 **Como ler o gráfico abaixo:** Barras Verdes indicam que os produtos nessas posições converteram melhor este mês do que no mês passado. Barras Vermelhas indicam perda de interesse visual (necessidade de trocar os produtos manuais).")
+                
+                # Gráfico de Variação de CTR Posicional
                 df_at['ctr_pos'] = (df_at['Items clicked in list'] / df_at['Items viewed in list'] * 100).fillna(0)
                 df_an['ctr_pos'] = (df_an['Items clicked in list'] / df_an['Items viewed in list'] * 100).fillna(0)
                 
@@ -294,25 +291,22 @@ if file_atual is not None:
                 limite_diff = max(prec_at, prec_an) + 12
                 m_diff_vis = m_diff[m_diff['Item list position'] <= limite_diff].copy()
                 
-                # Vetor de cores dinâmico
                 cores_barras = ['#1e6b27' if v >= 0 else '#dc2626' for v in m_diff_vis['diff_ctr']]
                 
                 fig_diff, ax_diff = plt.subplots(figsize=(12, 4.5))
                 ax_diff.bar(m_diff_vis['Item list position'], m_diff_vis['diff_ctr'], color=cores_barras, edgecolor='none', width=0.8)
                 ax_diff.axhline(y=0, color='#9ca3af', linestyle='-', linewidth=1.5)
-                
-                # Referência visual do corte atual
                 ax_diff.axvline(x=prec_at, color='#dc2626', linestyle='-.', linewidth=2, label=f'Cutoff Atual (Pos. {prec_at})')
                 
-                ax_diff.set_xlabel('Posição na PLP', fontsize=11, fontweight='bold')
+                ax_diff.set_xlabel('Posição na Listagem (Grelha Parfois)', fontsize=11, fontweight='bold')
                 ax_diff.set_ylabel('Variação Absoluta de CTR (%)', fontsize=11, fontweight='bold')
-                ax_diff.set_title(f'Balanço Temporal de Performance por Posição - {cat_comp}', fontsize=12, fontweight='bold')
+                ax_diff.set_title(f'Balanço de Eficiência Posicional (Mês Atual vs Mês Anterior) - {cat_comp}', fontsize=12, fontweight='bold')
                 ax_diff.legend(loc='upper right', frameon=True, facecolor='white')
                 
                 plt.tight_layout()
                 st.pyplot(fig_diff)
 
     except Exception as e:
-        st.error(f"Erro crítico ao processar a estrutura de dados: {e}")
+        st.error(f"Erro ao processar estrutura: {e}")
 else:
     st.info("Aguardando upload do ficheiro CSV mestre na barra lateral para iniciar a análise.")
